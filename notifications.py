@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot
+from datetime import datetime
 
 from config import NOTIFICATION_STATUSES, STATUS_POLL_INTERVAL
 import sheets
@@ -8,6 +9,23 @@ import sheets
 logger = logging.getLogger(__name__)
 
 SEND_DELAY = 0.05
+
+async def poll_projects():
+
+    while True:
+
+        try:
+
+            projects = sheets.get_all_projects()
+
+            for project in projects:
+                sheets.move_project_by_status(project)
+
+        except Exception as e:
+            logger.error(e)
+
+        await asyncio.sleep(300)
+
 
 
 async def poll_notifications(bot: Bot):
@@ -37,7 +55,11 @@ async def poll_notifications(bot: Bot):
                     continue
 
                 message = f"📋 <b>Проект: {project}</b>\n\n{text}"
+                current_hour = datetime.now().hour
+                user_hour = sheets.get_user_notify_hour(user_id)
 
+                if user_hour != current_hour:
+                    continue
                 try:
 
                     await bot.send_message(

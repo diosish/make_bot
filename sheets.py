@@ -179,6 +179,60 @@ def find_response(project_name: str, telegram_user_id: int) -> Optional[int]:
                 return idx
     return None
 
+def move_project_by_status(project_name: str):
+
+    planning_ws = sh.worksheet("Планируемые")
+    open_ws = sh.worksheet("Открытые")
+    closed_ws = sh.worksheet("Закрытые")
+
+    sheets = [planning_ws, open_ws, closed_ws]
+
+    for ws in sheets:
+
+        rows = ws.get_all_values()
+
+        for i, row in enumerate(rows[1:], start=2):
+
+            if row[0] == project_name:
+
+                project_type = row[2]
+
+                if project_type == "Планируемый":
+                    target = planning_ws
+
+                elif project_type == "Открыт":
+                    target = open_ws
+
+                elif project_type == "Закрыт":
+                    target = closed_ws
+
+                else:
+                    return
+
+                if target == ws:
+                    return
+
+                target.append_row(row)
+                ws.delete_rows(i)
+
+                logger.info(
+                    f"Project moved: {project_name} → {project_type}"
+                )
+
+                return
+
+def response_exists(user_id, project):
+
+    ws = get_responses_sheet(project)
+
+    rows = ws.get_all_values()
+
+    for row in rows:
+
+        if str(user_id) == row[2]:
+            return True
+
+    return False
 
 def save_response(
     project_name: str,

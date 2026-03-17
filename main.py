@@ -9,7 +9,7 @@ from aiogram.types import ErrorEvent
 
 from config import BOT_TOKEN
 from handlers import registration, vacancy, response, projects
-from notifications import poll_notifications
+from notifications import poll_notifications, poll_projects
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +46,7 @@ async def main():
 
     # background notifications
     asyncio.create_task(poll_notifications(bot))
+    asyncio.create_task(poll_projects())
 
     logger.info("Бот запущен")
 

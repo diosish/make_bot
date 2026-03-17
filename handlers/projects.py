@@ -91,3 +91,34 @@ async def project_detail(callback: CallbackQuery):
         )
 
     await callback.answer()
+
+@router.message(Command("notifications"))
+async def set_notifications(message: Message):
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="09:00", callback_data="notify_9")],
+            [InlineKeyboardButton(text="12:00", callback_data="notify_12")],
+            [InlineKeyboardButton(text="18:00", callback_data="notify_18")],
+            [InlineKeyboardButton(text="21:00", callback_data="notify_21")]
+        ]
+    )
+
+    await message.answer(
+        "Выберите время уведомлений",
+        reply_markup=kb
+    )
+
+@router.callback_query(F.data.startswith("notify_"))
+async def save_notify_time(callback: CallbackQuery):
+
+    hour = int(callback.data.split("_")[1])
+
+    sheets.save_notify_time(
+        callback.from_user.id,
+        hour
+    )
+
+    await callback.message.answer(
+        f"Уведомления будут приходить в {hour}:00"
+    )
