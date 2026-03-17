@@ -19,8 +19,9 @@ async def poll_projects():
             projects = sheets.get_all_projects()
 
             for project in projects:
+                if not project:
+                    continue
                 sheets.move_project_by_status(project)
-
         except Exception as e:
             logger.error(e)
 
@@ -58,7 +59,7 @@ async def poll_notifications(bot: Bot):
                 current_hour = datetime.now().hour
                 user_hour = sheets.get_user_notify_hour(user_id)
 
-                if user_hour != current_hour:
+                if user_hour is None or user_hour != current_hour:
                     continue
                 try:
 

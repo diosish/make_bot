@@ -181,6 +181,8 @@ def find_response(project_name: str, telegram_user_id: int) -> Optional[int]:
 
 def move_project_by_status(project_name: str):
 
+    sh = get_spreadsheet()
+
     planning_ws = sh.worksheet("Планируемые")
     open_ws = sh.worksheet("Открытые")
     closed_ws = sh.worksheet("Закрытые")
@@ -195,7 +197,10 @@ def move_project_by_status(project_name: str):
 
             if row[0] == project_name:
 
-                project_type = row[2]
+                headers = ws.row_values(1)
+                status_idx = headers.index("статус")
+
+                project_type = row[status_idx]
 
                 if project_type == "Планируемый":
                     target = planning_ws
@@ -233,6 +238,11 @@ def response_exists(user_id, project):
             return True
 
     return False
+
+def get_all_projects() -> list[str]:
+    ws = get_projects_sheet()
+    records = ws.get_all_records()
+    return [r.get("MAKE_BOT") for r in records if r.get("MAKE_BOT")]
 
 def save_response(
     project_name: str,
