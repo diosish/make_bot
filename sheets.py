@@ -6,7 +6,7 @@ import logging
 
 from config import (
     GOOGLE_CREDENTIALS_FILE, SPREADSHEET_ID, FREELANCERS_SPREADSHEET_ID,
-    USERS_SHEET, PROJECTS_SHEET, FREELANCERS_SHEET
+    USERS_SHEET, PROJECTS_SHEET, FREELANCERS_SHEET, MAX_COMMENT_LENGTH, MAX_RATE_LENGTH
 )
 
 logger = logging.getLogger(__name__)
@@ -193,21 +193,39 @@ def save_response(
     freelancer_row: Optional[list],
     found_in_base: str,
 ):
+
     ws = get_responses_sheet(project_name)
+
+    if len(comment) > MAX_COMMENT_LENGTH:
+        comment = comment[:MAX_COMMENT_LENGTH]
+
+    if len(rate) > MAX_RATE_LENGTH:
+        rate = rate[:MAX_RATE_LENGTH]
+
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
+
     base_data = " | ".join(str(v) for v in freelancer_row) if freelancer_row else ""
 
     ws.append_row([
-        project_name, position, telegram_user_id, username or "",
-        last_name, first_name,
-        availability, rate, comment,
-        found_in_base, base_data,
-        "",          # статус — заполняется вручную
+        project_name,
+        position,
+        telegram_user_id,
+        username or "",
+        last_name,
+        first_name,
+        availability,
+        rate,
+        comment,
+        found_in_base,
+        base_data,
+        "",
         "Активен",
-        now,
+        now
     ])
-    logger.info(f"Response saved: {telegram_user_id} → {project_name}")
 
+    logger.info(
+        f"Response saved | user={telegram_user_id} project={project_name}"
+    )
 
 def cancel_response(project_name: str, telegram_user_id: int) -> bool:
     ws = get_responses_sheet(project_name)
