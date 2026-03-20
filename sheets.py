@@ -6,7 +6,7 @@ import logging
 
 from config import (
     GOOGLE_CREDENTIALS_FILE, SPREADSHEET_ID, FREELANCERS_SPREADSHEET_ID,
-    USERS_SHEET, PROJECTS_SHEET, FREELANCERS_SHEET, MAX_COMMENT_LENGTH, MAX_RATE_LENGTH
+    USERS_SHEET, PROJECTS_SHEET, MAX_COMMENT_LENGTH, MAX_RATE_LENGTH
 )
 
 logger = logging.getLogger(__name__)
@@ -317,7 +317,7 @@ def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
       - (None, "not_found")      — не найдено
     """
     try:
-        ws = get_freelancers_spreadsheet().worksheet(FREELANCERS_SHEET)
+        ws = get_freelancers_spreadsheet().worksheet(USERS_SHEET)
         all_values = ws.get_all_values()
     except Exception as e:
         logger.error(f"Freelancer DB error: {e}")
