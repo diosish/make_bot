@@ -46,6 +46,7 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer_photo(
         photo=photo,
         caption=(
+            "👋 Добро пожаловать в МАКЕ Поток!\n\n"
             "Здесь вы будете получать актуальные проекты.\n\n"
             "👇 Давайте зарегистрируемся"
         )
@@ -69,7 +70,7 @@ async def profile_ok(callback: CallbackQuery):
 
 async def _start_registration(message: Message, state: FSMContext):
     await message.answer(
-        "👋 Добро пожаловать в МАКЕ Поток!\n\nВыберите вашу должность:",
+        "Выберите вашу должность:",
         reply_markup=positions_keyboard()
     )
     await state.set_state(RegistrationStates.choosing_position)
