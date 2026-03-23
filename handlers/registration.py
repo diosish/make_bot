@@ -3,6 +3,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import CommandStart
+from aiogram.types import FSInputFile
 
 from states import RegistrationStates
 from config import POSITIONS
@@ -40,6 +41,18 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         return
 
+    photo = FSInputFile("assets/welcome.jpg")
+
+    await message.answer_photo(
+        photo=photo,
+        caption=(
+            "👋 Добро пожаловать в МАКЕ Поток!\n\n"
+            "Здесь вы будете получать актуальные проекты.\n\n"
+            "👇 Давайте зарегистрируемся"
+        )
+    )
+
+    # дальше обычная регистрация
     await _start_registration(message, state)
 
 
