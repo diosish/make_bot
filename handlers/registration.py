@@ -46,7 +46,6 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer_photo(
         photo=photo,
         caption=(
-            "👋 Добро пожаловать в МАКЕ Поток!\n\n"
             "Здесь вы будете получать актуальные проекты.\n\n"
             "👇 Давайте зарегистрируемся"
         )
