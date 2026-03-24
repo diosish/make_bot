@@ -19,7 +19,8 @@ async def cmd_projects(message: Message):
         return
 
     position = user.get("должность", "")
-    projects = sheets.get_open_projects_by_position(position)
+    groups = sheets.get_projects_grouped()
+    projects = groups["current"]
 
     if not projects:
         await message.answer(
@@ -59,7 +60,8 @@ async def project_detail(callback: CallbackQuery):
         return
 
     # Ищем описание проекта
-    projects = sheets.get_open_projects_by_position(position)
+    groups = sheets.get_projects_grouped()
+    projects = groups["current"]
     description = ""
     for p in projects:
         if p.get("название проекта") == project_name:

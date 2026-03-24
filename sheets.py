@@ -18,6 +18,15 @@ SCOPES = [
 
 _client: Optional[gspread.Client] = None
 
+PROJECTS_HEADERS = [
+    "название проекта",
+    "должность",
+    "описание",
+    "статус",
+    "дата создания",
+    "активно",
+    "дата мероприятия"
+]
 
 def get_client() -> gspread.Client:
     global _client
@@ -99,20 +108,56 @@ def get_projects_sheet() -> gspread.Worksheet:
     return ws
 
 
-def upsert_project(project_name: str, position: str, description: str):
-    """Добавляет проект если его нет, или обновляет описание если есть."""
+def upsert_project(project_name: str, position: str, description: str, event_date: str):
     ws = get_projects_sheet()
     records = ws.get_all_records()
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
 
     for idx, r in enumerate(records, start=2):
         if r.get("название проекта") == project_name and r.get("должность") == position:
-            ws.update_cell(idx, 3, description)
+            ws.update(f"C{idx}:G{idx}", [[
+                description,
+                "Открыт",
+                now,
+                True,
+                event_date
+            ]])
             return
 
-    ws.append_row([project_name, position, description, "Открыт", now])
-    logger.info(f"Project added: {project_name} / {position}")
+    ws.append_row([
+        project_name,
+        position,
+        description,
+        "Открыт",
+        now,
+        True,
+        event_date
+    ])
 
+def get_active_projects_current_month() -> list[dict]:
+    ws = get_projects_sheet()
+    records = ws.get_all_records()
+
+    now = datetime.now()
+
+    result = []
+
+    for r in records:
+        active = r.get("активно")
+        date_str = r.get("дата мероприятия")
+
+        if not active or not date_str:
+            continue
+
+        try:
+            event_date = datetime.strptime(date_str, "%d.%m.%Y")
+        except:
+            continue
+
+        if event_date.month == now.month and event_date.year == now.year:
+            result.append(r)
+
+    return result
 
 def get_open_projects_by_position(position: str) -> list[dict]:
     """Возвращает открытые проекты для данной должности."""
@@ -144,6 +189,48 @@ def set_project_status(project_name: str, status: str) -> bool:
             changed = True
     return changed
 
+def get_projects_grouped():
+    ws = get_projects_sheet()
+    records = ws.get_all_records()
+
+    now = datetime.now()
+
+    current = []
+    future = []
+    archive = []
+
+    for r in records:
+        active = str(r.get("активно")).lower() == "true"
+        date_str = r.get("дата мероприятия")
+
+        if not date_str:
+            archive.append(r)
+            continue
+
+        try:
+            event_date = datetime.strptime(date_str, "%d.%m.%Y")
+        except:
+            archive.append(r)
+            continue
+
+        if not active:
+            archive.append(r)
+            continue
+
+        if event_date.year == now.year and event_date.month == now.month:
+            current.append(r)
+
+        elif (event_date.year, event_date.month) > (now.year, now.month):
+            future.append(r)
+
+        else:
+            archive.append(r)
+
+    return {
+        "current": current,
+        "future": future,
+        "archive": archive
+    }
 
 # ─────────────────────────────────────────
 # ОТКЛИКИ
@@ -361,7 +448,12 @@ def get_pending_notifications(target_statuses: list[str]) -> list[dict]:
             # Добавляем колонку "уведомление отправлено" если её нет
             notif_col_name = "уведомление отправлено"
             if notif_col_name not in headers:
-                ws.update_cell(1, len(headers) + 1, notif_col_name)
+                needed_col = len(headers) + 1
+
+                if needed_col > ws.col_count:
+                    ws.add_cols(needed_col - ws.col_count)
+
+                ws.update_cell(1, needed_col, notif_col_name)
                 headers.append(notif_col_name)
 
             notif_col_idx = headers.index(notif_col_name) + 1

@@ -16,7 +16,8 @@ async def poll_projects():
 
         try:
 
-            projects = sheets.get_all_projects()
+            groups = sheets.get_projects_grouped()
+            projects = [p["название проекта"] for p in groups["current"]]
 
             for project in projects:
                 if not project:
