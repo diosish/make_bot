@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from aiogram import Router, F
 from aiogram.types import (
@@ -40,12 +41,18 @@ def positions_keyboard():
     )
 
 
+# Запускает синхронный sheets-вызов в отдельном потоке, не блокируя event loop
+async def _run(func, *args):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, func, *args)
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
 
     user_id = message.from_user.id
-    existing = sheets.find_user(user_id)
+    existing = await _run(sheets.find_user, user_id)
 
     if existing:
         await message.answer(
@@ -71,6 +78,12 @@ async def cmd_start(message: Message, state: FSMContext):
         )
     )
 
+    # Сохраняем user_id в state — чтобы не терять его при вызовах через callback.message
+    await state.update_data(
+        telegram_user_id=message.from_user.id,
+        username=message.from_user.username or "",
+    )
+
     tg_last_name = message.from_user.last_name
 
     if tg_last_name:
@@ -89,7 +102,6 @@ async def cmd_start(message: Message, state: FSMContext):
         await state.set_state(Registration.last_name)
 
 
-# Подтвердить фамилию из Telegram
 @router.callback_query(F.data == "ln_yes")
 async def last_name_confirmed(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup()
@@ -99,13 +111,13 @@ async def last_name_confirmed(callback: CallbackQuery, state: FSMContext):
     if not last_name:
         await callback.message.answer("Ошибка. Введите фамилию:")
         await state.set_state(Registration.last_name)
+        await callback.answer()
         return
 
     await check_freelancer(callback.message, state)
     await callback.answer()
 
 
-# БАГ ИСПРАВЛЕН: кнопка "Изменить" не имела обработчика
 @router.callback_query(F.data == "ln_edit")
 async def last_name_edit(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup()
@@ -114,17 +126,24 @@ async def last_name_edit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# Ввод фамилии вручную (состояние last_name)
 @router.message(Registration.last_name)
 async def process_last_name(message: Message, state: FSMContext):
-    await state.update_data(last_name=message.text.strip())
+    # Обновляем user_id на случай если state был создан без него
+    await state.update_data(
+        last_name=message.text.strip(),
+        telegram_user_id=message.from_user.id,
+        username=message.from_user.username or "",
+    )
     await check_freelancer(message, state)
 
 
-# Ввод фамилии в состоянии confirm_last_name (если пользователь всё равно написал текст)
 @router.message(Registration.confirm_last_name)
 async def process_confirm_last_name_text(message: Message, state: FSMContext):
-    await state.update_data(last_name=message.text.strip())
+    await state.update_data(
+        last_name=message.text.strip(),
+        telegram_user_id=message.from_user.id,
+        username=message.from_user.username or "",
+    )
     await check_freelancer(message, state)
 
 
@@ -132,7 +151,7 @@ async def check_freelancer(message: Message, state: FSMContext):
     data = await state.get_data()
     last_name = data["last_name"]
 
-    freelancer_row, status = sheets.search_freelancer(last_name)
+    freelancer_row, status = await _run(sheets.search_freelancer, last_name)
 
     if status == "found":
         first_name = freelancer_row[0]
@@ -158,7 +177,11 @@ async def check_freelancer(message: Message, state: FSMContext):
 
 @router.message(Registration.first_name)
 async def process_first_name(message: Message, state: FSMContext):
-    await state.update_data(first_name=message.text.strip())
+    await state.update_data(
+        first_name=message.text.strip(),
+        telegram_user_id=message.from_user.id,
+        username=message.from_user.username or "",
+    )
     await message.answer("Выберите должность:", reply_markup=positions_keyboard())
     await state.set_state(Registration.position)
 
@@ -168,25 +191,33 @@ async def process_position(callback: CallbackQuery, state: FSMContext):
     position = callback.data.split("pos:")[1]
     await state.update_data(position=position)
     await callback.message.answer(f"✅ Выбрано: {position}")
-    await finish_registration(callback, state)
+    await finish_registration(callback.message, state)
     await callback.answer()
 
 
-async def finish_registration(event, state: FSMContext):
+async def finish_registration(message: Message, state: FSMContext):
     data = await state.get_data()
-    user = event.from_user
 
-    sheets.save_user(
-        telegram_user_id=user.id,
-        username=user.username,
-        last_name=data["last_name"],
-        first_name=data["first_name"],
-        position=data["position"]
+    # Берём user_id из state — не из message.from_user, чтобы не получить бота
+    telegram_user_id = data.get("telegram_user_id")
+    username = data.get("username", "")
+
+    if not telegram_user_id:
+        logger.error("finish_registration: telegram_user_id отсутствует в state!")
+        await message.answer("Произошла ошибка. Пожалуйста, начните регистрацию заново — /start")
+        await state.clear()
+        return
+
+    await _run(
+        sheets.save_user,
+        telegram_user_id,
+        username,
+        data["last_name"],
+        data["first_name"],
+        data["position"],
     )
 
-    msg = event.message if hasattr(event, "message") else event
-
-    await msg.answer(
+    await message.answer(
         "🎉 Регистрация завершена!\n\nНажмите кнопку ниже, чтобы посмотреть доступные мероприятия.",
         reply_markup=main_keyboard()
     )
@@ -196,6 +227,11 @@ async def finish_registration(event, state: FSMContext):
 @router.callback_query(F.data == "update_profile")
 async def update_profile(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup()
+    # Сохраняем user_id сразу
+    await state.update_data(
+        telegram_user_id=callback.from_user.id,
+        username=callback.from_user.username or "",
+    )
     await callback.message.answer("Введите фамилию:")
     await state.set_state(Registration.last_name)
     await callback.answer()
