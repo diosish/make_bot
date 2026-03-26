@@ -18,6 +18,8 @@ SCOPES = [
 
 _client: Optional[gspread.Client] = None
 
+# БАГ ИСПРАВЛЕН: был объявлен дважды, второе объявление перезаписывало первое
+# и не включало колонки "активно" и "дата мероприятия"
 PROJECTS_HEADERS = [
     "название проекта",
     "должность",
@@ -25,8 +27,9 @@ PROJECTS_HEADERS = [
     "статус",
     "дата создания",
     "активно",
-    "дата мероприятия"
+    "дата мероприятия",
 ]
+
 
 def get_client() -> gspread.Client:
     global _client
@@ -54,7 +57,8 @@ def get_users_sheet() -> gspread.Worksheet:
         ws = ss.worksheet(USERS_SHEET)
     except gspread.exceptions.WorksheetNotFound:
         ws = ss.add_worksheet(title=USERS_SHEET, rows=1000, cols=10)
-        ws.append_row(["telegram_user_id", "telegram_username", "фамилия", "имя", "должность", "дата регистрации"])
+        ws.append_row(["telegram_user_id", "telegram_username", "фамилия", "имя", "должность",
+                        "дата регистрации", "время уведомлений"])
     return ws
 
 
@@ -80,7 +84,7 @@ def save_user(telegram_user_id: int, username: str, last_name: str, first_name: 
             logger.info(f"User {telegram_user_id} updated")
             return
 
-    ws.append_row([telegram_user_id, username or "", last_name, first_name, position, now])
+    ws.append_row([telegram_user_id, username or "", last_name, first_name, position, now, ""])
     logger.info(f"User {telegram_user_id} registered")
 
 
@@ -90,13 +94,46 @@ def get_users_by_position(position: str) -> list[dict]:
     return [r for r in records if r.get("должность") == position]
 
 
+# БАГ ИСПРАВЛЕН: функция не была определена, вызов из projects.py падал с AttributeError
+def save_notify_time(telegram_user_id: int, hour: int):
+    ws = get_users_sheet()
+    records = ws.get_all_records()
+    headers = ws.row_values(1)
+
+    # Убеждаемся, что колонка существует
+    col_name = "время уведомлений"
+    if col_name not in headers:
+        new_col = len(headers) + 1
+        ws.update_cell(1, new_col, col_name)
+        headers.append(col_name)
+
+    col_idx = headers.index(col_name) + 1
+
+    for idx, r in enumerate(records, start=2):
+        if str(r.get("telegram_user_id")) == str(telegram_user_id):
+            ws.update_cell(idx, col_idx, hour)
+            logger.info(f"Notify time saved: user={telegram_user_id} hour={hour}")
+            return
+
+
+# БАГ ИСПРАВЛЕН: функция не была определена, вызов из notifications.py ломал весь polling
+def get_user_notify_hour(telegram_user_id: int) -> Optional[int]:
+    ws = get_users_sheet()
+    records = ws.get_all_records()
+    for r in records:
+        if str(r.get("telegram_user_id")) == str(telegram_user_id):
+            val = r.get("время уведомлений", "")
+            if val != "" and val is not None:
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    return None
+    return None
+
 
 # ─────────────────────────────────────────
 # ПРОЕКТЫ
 # ─────────────────────────────────────────
-
-PROJECTS_HEADERS = ["название проекта", "должность", "описание", "статус", "дата создания"]
-
 
 def get_projects_sheet() -> gspread.Worksheet:
     ss = get_spreadsheet()
@@ -108,7 +145,7 @@ def get_projects_sheet() -> gspread.Worksheet:
     return ws
 
 
-def upsert_project(project_name: str, position: str, description: str, event_date: str):
+def upsert_project(project_name: str, position: str, description: str, event_date: str = ""):
     ws = get_projects_sheet()
     records = ws.get_all_records()
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -120,7 +157,7 @@ def upsert_project(project_name: str, position: str, description: str, event_dat
                 "Открыт",
                 now,
                 True,
-                event_date
+                event_date,
             ]])
             return
 
@@ -131,42 +168,8 @@ def upsert_project(project_name: str, position: str, description: str, event_dat
         "Открыт",
         now,
         True,
-        event_date
+        event_date,
     ])
-
-def get_active_projects_current_month() -> list[dict]:
-    ws = get_projects_sheet()
-    records = ws.get_all_records()
-
-    now = datetime.now()
-
-    result = []
-
-    for r in records:
-        active = r.get("активно")
-        date_str = r.get("дата мероприятия")
-
-        if not active or not date_str:
-            continue
-
-        try:
-            event_date = datetime.strptime(date_str, "%d.%m.%Y")
-        except:
-            continue
-
-        if event_date.month == now.month and event_date.year == now.year:
-            result.append(r)
-
-    return result
-
-def get_open_projects_by_position(position: str) -> list[dict]:
-    """Возвращает открытые проекты для данной должности."""
-    ws = get_projects_sheet()
-    records = ws.get_all_records()
-    return [
-        r for r in records
-        if r.get("должность") == position and r.get("статус", "").strip() == "Открыт"
-    ]
 
 
 def is_project_open(project_name: str, position: str) -> bool:
@@ -179,7 +182,6 @@ def is_project_open(project_name: str, position: str) -> bool:
 
 
 def set_project_status(project_name: str, status: str) -> bool:
-    """Устанавливает статус всем записям с данным названием проекта."""
     ws = get_projects_sheet()
     records = ws.get_all_records()
     changed = False
@@ -189,10 +191,10 @@ def set_project_status(project_name: str, status: str) -> bool:
             changed = True
     return changed
 
-def get_projects_grouped():
+
+def get_projects_grouped() -> dict:
     ws = get_projects_sheet()
     records = ws.get_all_records()
-
     now = datetime.now()
 
     current = []
@@ -200,16 +202,16 @@ def get_projects_grouped():
     archive = []
 
     for r in records:
-        active = str(r.get("активно")).lower() == "true"
-        date_str = r.get("дата мероприятия")
+        active = str(r.get("активно", "")).lower() == "true"
+        date_str = r.get("дата мероприятия", "")
 
         if not date_str:
             archive.append(r)
             continue
 
         try:
-            event_date = datetime.strptime(date_str, "%d.%m.%Y")
-        except:
+            event_date = datetime.strptime(str(date_str).strip(), "%d.%m.%Y")
+        except (ValueError, TypeError):
             archive.append(r)
             continue
 
@@ -219,18 +221,64 @@ def get_projects_grouped():
 
         if event_date.year == now.year and event_date.month == now.month:
             current.append(r)
-
         elif (event_date.year, event_date.month) > (now.year, now.month):
             future.append(r)
-
         else:
             archive.append(r)
 
-    return {
-        "current": current,
-        "future": future,
-        "archive": archive
-    }
+    return {"current": current, "future": future, "archive": archive}
+
+
+# БАГ ИСПРАВЛЕН: не было try/except при открытии листов — падало если листов нет
+def move_project_by_status(project_name: str):
+    sh = get_spreadsheet()
+
+    try:
+        planning_ws = sh.worksheet("Планируемые")
+        open_ws = sh.worksheet("Открытые")
+        closed_ws = sh.worksheet("Закрытые")
+    except gspread.exceptions.WorksheetNotFound as e:
+        logger.warning(f"move_project_by_status: лист не найден — {e}")
+        return
+
+    all_ws = [planning_ws, open_ws, closed_ws]
+
+    for ws in all_ws:
+        try:
+            rows = ws.get_all_values()
+            headers = ws.row_values(1)
+
+            if "статус" not in headers:
+                continue
+
+            status_idx = headers.index("статус")
+
+            for i, row in enumerate(rows[1:], start=2):
+                if not row or row[0] != project_name:
+                    continue
+
+                project_type = row[status_idx] if status_idx < len(row) else ""
+
+                if project_type == "Планируемый":
+                    target = planning_ws
+                elif project_type == "Открыт":
+                    target = open_ws
+                elif project_type == "Закрыт":
+                    target = closed_ws
+                else:
+                    return
+
+                if target == ws:
+                    return
+
+                target.append_row(row)
+                ws.delete_rows(i)
+                logger.info(f"Project moved: {project_name} → {project_type}")
+                return
+
+        except Exception as e:
+            logger.error(f"move_project_by_status error on sheet {ws.title}: {e}")
+
 
 # ─────────────────────────────────────────
 # ОТКЛИКИ
@@ -240,7 +288,7 @@ RESPONSE_HEADERS = [
     "название проекта", "должность", "telegram_user_id", "telegram_username",
     "фамилия", "имя", "доступность", "ставка", "комментарий",
     "найдено в базе", "данные из базы",
-    "статус", "статус отклика", "дата отклика"
+    "статус", "статус отклика", "дата отклика",
 ]
 
 
@@ -256,80 +304,15 @@ def get_responses_sheet(project_name: str) -> gspread.Worksheet:
 
 
 def find_response(project_name: str, telegram_user_id: int) -> Optional[int]:
-    """Возвращает номер строки если отклик уже есть, иначе None."""
+    """Возвращает номер строки если активный отклик уже есть, иначе None."""
     ws = get_responses_sheet(project_name)
     records = ws.get_all_records()
     for idx, r in enumerate(records, start=2):
         if str(r.get("telegram_user_id")) == str(telegram_user_id):
-            status = r.get("статус отклика", "")
-            if status != "Отменён":
+            if r.get("статус отклика", "") != "Отменён":
                 return idx
     return None
 
-def move_project_by_status(project_name: str):
-
-    sh = get_spreadsheet()
-
-    planning_ws = sh.worksheet("Планируемые")
-    open_ws = sh.worksheet("Открытые")
-    closed_ws = sh.worksheet("Закрытые")
-
-    sheets = [planning_ws, open_ws, closed_ws]
-
-    for ws in sheets:
-
-        rows = ws.get_all_values()
-
-        for i, row in enumerate(rows[1:], start=2):
-
-            if row[0] == project_name:
-
-                headers = ws.row_values(1)
-                status_idx = headers.index("статус")
-
-                project_type = row[status_idx]
-
-                if project_type == "Планируемый":
-                    target = planning_ws
-
-                elif project_type == "Открыт":
-                    target = open_ws
-
-                elif project_type == "Закрыт":
-                    target = closed_ws
-
-                else:
-                    return
-
-                if target == ws:
-                    return
-
-                target.append_row(row)
-                ws.delete_rows(i)
-
-                logger.info(
-                    f"Project moved: {project_name} → {project_type}"
-                )
-
-                return
-
-def response_exists(user_id, project):
-
-    ws = get_responses_sheet(project)
-
-    rows = ws.get_all_values()
-
-    for row in rows:
-
-        if str(user_id) == row[2]:
-            return True
-
-    return False
-
-def get_all_projects() -> list[str]:
-    ws = get_projects_sheet()
-    records = ws.get_all_records()
-    return [r.get("MAKE_BOT") for r in records if r.get("MAKE_BOT")]
 
 def save_response(
     project_name: str,
@@ -344,17 +327,14 @@ def save_response(
     freelancer_row: Optional[list],
     found_in_base: str,
 ):
-
     ws = get_responses_sheet(project_name)
 
     if len(comment) > MAX_COMMENT_LENGTH:
         comment = comment[:MAX_COMMENT_LENGTH]
-
     if len(rate) > MAX_RATE_LENGTH:
         rate = rate[:MAX_RATE_LENGTH]
 
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-
     base_data = " | ".join(str(v) for v in freelancer_row) if freelancer_row else ""
 
     ws.append_row([
@@ -371,83 +351,48 @@ def save_response(
         base_data,
         "",
         "Активен",
-        now
+        now,
     ])
+    logger.info(f"Response saved | user={telegram_user_id} project={project_name}")
 
-    logger.info(
-        f"Response saved | user={telegram_user_id} project={project_name}"
-    )
 
 def cancel_response(project_name: str, telegram_user_id: int) -> bool:
     ws = get_responses_sheet(project_name)
     records = ws.get_all_records()
-    col_status_otklika = RESPONSE_HEADERS.index("статус отклика") + 1
+    col_idx = RESPONSE_HEADERS.index("статус отклика") + 1
 
     for idx, r in enumerate(records, start=2):
         if str(r.get("telegram_user_id")) == str(telegram_user_id):
             if r.get("статус отклика") != "Отменён":
-                ws.update_cell(idx, col_status_otklika, "Отменён")
+                ws.update_cell(idx, col_idx, "Отменён")
                 logger.info(f"Response cancelled: {telegram_user_id} → {project_name}")
                 return True
     return False
 
 
 # ─────────────────────────────────────────
-# БАЗА ФРИЛАНСЕРОВ
-# ─────────────────────────────────────────
-
-def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
-    try:
-        ws = get_freelancers_spreadsheet().worksheet(FREELANCERS_SHEET)
-        rows = ws.get_all_values()
-    except Exception as e:
-        logger.error(f"Freelancer DB error: {e}")
-        return None, "not_found"
-
-    matches = []
-
-    for row in rows[1:]:
-        # фамилия = 2 колонка (индекс 1)
-        if len(row) > 1 and row[1].strip().lower() == last_name.strip().lower():
-            matches.append(row)
-
-    if len(matches) == 1:
-        return matches[0], "found"
-
-    elif len(matches) > 1:
-        return None, "multiple"
-
-    else:
-        return None, "not_found"
-
-# ─────────────────────────────────────────
 # POLLING СТАТУСОВ ДЛЯ УВЕДОМЛЕНИЙ
 # ─────────────────────────────────────────
 
 def get_pending_notifications(target_statuses: list[str]) -> list[dict]:
-    """
-    Сканирует все листы откликов и возвращает строки, у которых:
-    - статус совпадает с target_statuses
-    - статус отклика = Активен
-    - уведомление ещё не отправлено (нет отметки в доп. колонке)
-    """
     ss = get_spreadsheet()
     results = []
 
+    # БАГ ИСПРАВЛЕН: теперь исключаем и PROJECTS_SHEET, а не только USERS_SHEET
+    skip_titles = {USERS_SHEET, PROJECTS_SHEET}
+
     for ws in ss.worksheets():
-        if ws.title == USERS_SHEET:
+        if ws.title in skip_titles:
             continue
         try:
             records = ws.get_all_records()
             headers = ws.row_values(1)
-            # Добавляем колонку "уведомление отправлено" если её нет
+
             notif_col_name = "уведомление отправлено"
             if notif_col_name not in headers:
                 needed_col = len(headers) + 1
-
                 if needed_col > ws.col_count:
                     ws.add_cols(needed_col - ws.col_count)
-
                 ws.update_cell(1, needed_col, notif_col_name)
                 headers.append(notif_col_name)
 
@@ -455,7 +400,7 @@ def get_pending_notifications(target_statuses: list[str]) -> list[dict]:
 
             for row_idx, r in enumerate(records, start=2):
                 status = r.get("статус", "").strip()
-                notif_sent = r.get("уведомление отправлено", "").strip()
+                notif_sent = str(r.get("уведомление отправлено", "")).strip()
                 active = r.get("статус отклика", "").strip()
 
                 if status in target_statuses and not notif_sent and active == "Активен":

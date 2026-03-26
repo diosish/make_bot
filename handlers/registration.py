@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-# FSM
 class Registration(StatesGroup):
     confirm_last_name = State()
     last_name = State()
@@ -24,19 +23,14 @@ class Registration(StatesGroup):
     position = State()
 
 
-# ─── Главная клавиатура (показывается после регистрации) ──────────
-
 def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📋 Доступные мероприятия")],
-        ],
+        keyboard=[[KeyboardButton(text="📋 Доступные мероприятия")]],
         resize_keyboard=True,
         persistent=True
     )
 
 
-# клавиатура должностей
 def positions_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -46,7 +40,6 @@ def positions_keyboard():
     )
 
 
-# START
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -54,7 +47,6 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     existing = sheets.find_user(user_id)
 
-    # уже зарегистрирован
     if existing:
         await message.answer(
             f"👋 Вы уже зарегистрированы!\n\n"
@@ -69,9 +61,7 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         return
 
-    # приветствие с картинкой
     photo = FSInputFile("assets/welcome.jpg")
-
     await message.answer_photo(
         photo=photo,
         caption=(
@@ -81,20 +71,16 @@ async def cmd_start(message: Message, state: FSMContext):
         )
     )
 
-    def confirm_keyboard():
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да", callback_data="ln_yes")],
-            [InlineKeyboardButton(text="✏️ Изменить", callback_data="ln_edit")]
-        ])
-
-    # берем фамилию из Telegram
     tg_last_name = message.from_user.last_name
 
     if tg_last_name:
         await message.answer(
-            f"Ваша фамилия: <b>{tg_last_name}</b>?\n\nВведите другую или подтвердите:",
+            f"Ваша фамилия: <b>{tg_last_name}</b>?\n\nПодтвердите или введите другую:",
             parse_mode="HTML",
-            reply_markup=confirm_keyboard()
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Да", callback_data="ln_yes")],
+                [InlineKeyboardButton(text="✏️ Изменить", callback_data="ln_edit")]
+            ])
         )
         await state.update_data(last_name=tg_last_name)
         await state.set_state(Registration.confirm_last_name)
@@ -103,11 +89,10 @@ async def cmd_start(message: Message, state: FSMContext):
         await state.set_state(Registration.last_name)
 
 
+# Подтвердить фамилию из Telegram
 @router.callback_query(F.data == "ln_yes")
 async def last_name_confirmed(callback: CallbackQuery, state: FSMContext):
-
     await callback.message.edit_reply_markup()
-
     data = await state.get_data()
     last_name = data.get("last_name")
 
@@ -117,25 +102,38 @@ async def last_name_confirmed(callback: CallbackQuery, state: FSMContext):
         return
 
     await check_freelancer(callback.message, state)
-
     await callback.answer()
 
-# ввод фамилии
+
+# БАГ ИСПРАВЛЕН: кнопка "Изменить" не имела обработчика
+@router.callback_query(F.data == "ln_edit")
+async def last_name_edit(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("Введите вашу фамилию:")
+    await state.set_state(Registration.last_name)
+    await callback.answer()
+
+
+# Ввод фамилии вручную (состояние last_name)
 @router.message(Registration.last_name)
 async def process_last_name(message: Message, state: FSMContext):
-    last_name = message.text.strip()
-    await state.update_data(last_name=last_name)
+    await state.update_data(last_name=message.text.strip())
     await check_freelancer(message, state)
 
 
-# проверка базы фрилансеров
+# Ввод фамилии в состоянии confirm_last_name (если пользователь всё равно написал текст)
+@router.message(Registration.confirm_last_name)
+async def process_confirm_last_name_text(message: Message, state: FSMContext):
+    await state.update_data(last_name=message.text.strip())
+    await check_freelancer(message, state)
+
+
 async def check_freelancer(message: Message, state: FSMContext):
     data = await state.get_data()
     last_name = data["last_name"]
 
     freelancer_row, status = sheets.search_freelancer(last_name)
 
-    # найден
     if status == "found":
         first_name = freelancer_row[0]
         position = freelancer_row[6]
@@ -146,57 +144,36 @@ async def check_freelancer(message: Message, state: FSMContext):
             f"💼 {position}\n\n"
             f"Регистрация завершена"
         )
-
-        await state.update_data(
-            first_name=first_name,
-            position=position
-        )
-
+        await state.update_data(first_name=first_name, position=position)
         await finish_registration(message, state)
-        return
 
-    # не найден
     elif status == "not_found":
         await message.answer("❌ Вас нет в базе\nВведите имя:")
         await state.set_state(Registration.first_name)
 
-    # несколько
     elif status == "multiple":
         await message.answer("⚠️ Найдено несколько совпадений\nВведите имя:")
         await state.set_state(Registration.first_name)
 
 
-# ввод имени
 @router.message(Registration.first_name)
 async def process_first_name(message: Message, state: FSMContext):
     await state.update_data(first_name=message.text.strip())
-
-    await message.answer(
-        "Выберите должность:",
-        reply_markup=positions_keyboard()
-    )
-
+    await message.answer("Выберите должность:", reply_markup=positions_keyboard())
     await state.set_state(Registration.position)
 
 
-# выбор должности
 @router.callback_query(Registration.position, F.data.startswith("pos:"))
 async def process_position(callback: CallbackQuery, state: FSMContext):
     position = callback.data.split("pos:")[1]
-
     await state.update_data(position=position)
-
     await callback.message.answer(f"✅ Выбрано: {position}")
-
     await finish_registration(callback, state)
     await callback.answer()
 
 
-# завершение регистрации
 async def finish_registration(event, state: FSMContext):
-
     data = await state.get_data()
-
     user = event.from_user
 
     sheets.save_user(
@@ -207,33 +184,25 @@ async def finish_registration(event, state: FSMContext):
         position=data["position"]
     )
 
-    # отправка сообщения
-    if hasattr(event, "message"):
-        msg = event.message
-    else:
-        msg = event
+    msg = event.message if hasattr(event, "message") else event
 
     await msg.answer(
         "🎉 Регистрация завершена!\n\nНажмите кнопку ниже, чтобы посмотреть доступные мероприятия.",
         reply_markup=main_keyboard()
     )
-
     await state.clear()
 
 
-# обновление профиля
 @router.callback_query(F.data == "update_profile")
 async def update_profile(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup()
     await callback.message.answer("Введите фамилию:")
     await state.set_state(Registration.last_name)
+    await callback.answer()
 
 
-# профиль ок
 @router.callback_query(F.data == "profile_ok")
 async def profile_ok(callback: CallbackQuery):
     await callback.message.edit_reply_markup()
-    await callback.message.answer(
-        "✅ Отлично! Ожидайте вакансий.",
-        reply_markup=main_keyboard()
-    )
+    await callback.message.answer("✅ Отлично! Ожидайте вакансий.", reply_markup=main_keyboard())
+    await callback.answer()

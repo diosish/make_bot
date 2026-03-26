@@ -10,7 +10,6 @@ router = Router()
 
 
 async def show_projects(message: Message):
-    """Общая логика показа проектов — используется и из команды, и из кнопки."""
     user_id = message.from_user.id
     user = sheets.find_user(user_id)
 
@@ -20,7 +19,9 @@ async def show_projects(message: Message):
 
     position = user.get("должность", "")
     groups = sheets.get_projects_grouped()
-    projects = groups["current"]
+
+    # БАГ ИСПРАВЛЕН: фильтруем проекты по должности пользователя
+    projects = [p for p in groups["current"] if p.get("должность") == position]
 
     if not projects:
         await message.answer(
@@ -73,10 +74,9 @@ async def project_detail(callback: CallbackQuery):
         return
 
     groups = sheets.get_projects_grouped()
-    projects = groups["current"]
     description = ""
     event_date = ""
-    for p in projects:
+    for p in groups["current"]:
         if p.get("название проекта") == project_name:
             description = p.get("описание", "")
             event_date = p.get("дата мероприятия", "")
@@ -130,3 +130,4 @@ async def save_notify_time(callback: CallbackQuery):
     hour = int(callback.data.split("_")[1])
     sheets.save_notify_time(callback.from_user.id, hour)
     await callback.message.answer(f"Уведомления будут приходить в {hour}:00")
+    await callback.answer()

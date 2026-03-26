@@ -10,24 +10,15 @@ logger = logging.getLogger(__name__)
 
 SEND_DELAY = 0.05
 
+
 async def poll_projects():
-
+    """
+    Ранее перемещала проекты между отдельными листами (Планируемые/Открытые/Закрытые).
+    Эта логика избыточна — статус хранится в колонке 'статус' листа 'Проекты'.
+    Функция оставлена как заглушка, чтобы не менять main.py.
+    """
     while True:
-
-        try:
-
-            groups = sheets.get_projects_grouped()
-            projects = [p["название проекта"] for p in groups["current"]]
-
-            for project in projects:
-                if not project:
-                    continue
-                sheets.move_project_by_status(project)
-        except Exception as e:
-            logger.error(e)
-
-        await asyncio.sleep(300)
-
+        await asyncio.sleep(STATUS_POLL_INTERVAL)
 
 
 async def poll_notifications(bot: Bot):
@@ -37,7 +28,6 @@ async def poll_notifications(bot: Bot):
     while True:
 
         try:
-
             pending = sheets.get_pending_notifications(target_statuses)
 
             if pending:
@@ -56,17 +46,21 @@ async def poll_notifications(bot: Bot):
                 if not text:
                     continue
 
-                message = f"📋 <b>Проект: {project}</b>\n\n{text}"
                 current_hour = datetime.now().hour
                 user_hour = sheets.get_user_notify_hour(user_id)
 
-                if user_hour is None or user_hour != current_hour:
+                # Если время уведомлений не задано — отправляем сразу
+                # Если задано — ждём нужного часа
+                if user_hour is not None and user_hour != current_hour:
                     continue
-                try:
 
+                message = f"📋 <b>Проект: {project}</b>\n\n{text}"
+
+                try:
                     await bot.send_message(
                         chat_id=int(user_id),
-                        text=message
+                        text=message,
+                        parse_mode="HTML"
                     )
 
                     sheets.mark_notification_sent(
@@ -82,13 +76,9 @@ async def poll_notifications(bot: Bot):
                     await asyncio.sleep(SEND_DELAY)
 
                 except Exception as e:
-
-                    logger.warning(
-                        f"Ошибка отправки уведомления user={user_id}: {e}"
-                    )
+                    logger.warning(f"Ошибка отправки уведомления user={user_id}: {e}")
 
         except Exception as e:
-
             logger.error(f"Ошибка polling: {e}")
 
         await asyncio.sleep(STATUS_POLL_INTERVAL)
