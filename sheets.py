@@ -6,7 +6,7 @@ import logging
 
 from config import (
     GOOGLE_CREDENTIALS_FILE, SPREADSHEET_ID, FREELANCERS_SPREADSHEET_ID,
-    USERS_SHEET, PROJECTS_SHEET, MAX_COMMENT_LENGTH, MAX_RATE_LENGTH
+    USERS_SHEET, PROJECTS_SHEET, MAX_COMMENT_LENGTH, MAX_RATE_LENGTH, FREELANCERS_SHEET
 )
 
 logger = logging.getLogger(__name__)
@@ -397,33 +397,28 @@ def cancel_response(project_name: str, telegram_user_id: int) -> bool:
 # ─────────────────────────────────────────
 
 def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
-    """
-    Возвращает (строка данных, статус):
-      - (row, "found")           — одно совпадение
-      - (None, "multiple")       — несколько совпадений
-      - (None, "not_found")      — не найдено
-    """
     try:
-        ws = get_freelancers_spreadsheet().worksheet(USERS_SHEET)
-        all_values = ws.get_all_values()
+        ws = get_freelancers_spreadsheet().worksheet(FREELANCERS_SHEET)
+        rows = ws.get_all_values()
     except Exception as e:
         logger.error(f"Freelancer DB error: {e}")
         return None, "not_found"
 
     matches = []
-    for row in all_values[1:]:  # пропускаем заголовок
-        row_values = [str(v).strip() for v in row]
-        # ищем фамилию в любой ячейке строки (гибко)
-        if any(v.lower() == last_name.strip().lower() for v in row_values):
+
+    for row in rows[1:]:
+        # фамилия = 2 колонка (индекс 1)
+        if len(row) > 1 and row[1].strip().lower() == last_name.strip().lower():
             matches.append(row)
 
     if len(matches) == 1:
         return matches[0], "found"
+
     elif len(matches) > 1:
         return None, "multiple"
+
     else:
         return None, "not_found"
-
 
 # ─────────────────────────────────────────
 # POLLING СТАТУСОВ ДЛЯ УВЕДОМЛЕНИЙ

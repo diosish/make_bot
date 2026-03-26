@@ -12,6 +12,7 @@ GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json
 
 USERS_SHEET = "Users"
 PROJECTS_SHEET = "Проекты"
+FREELANCERS_SHEET = "Общая База"
 
 POSITIONS = [
     "Event-менеджер",

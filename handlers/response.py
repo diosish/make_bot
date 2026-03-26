@@ -30,7 +30,6 @@ def skip_keyboard(callback_data: str) -> InlineKeyboardMarkup:
 async def apply_start(callback: CallbackQuery, state: FSMContext):
     _, project, position = callback.data.split(":", 2)
 
-    # Получаем данные пользователя
     user_id = callback.from_user.id
     user_data = sheets.find_user(user_id)
 
@@ -38,13 +37,11 @@ async def apply_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала пройдите регистрацию — нажмите /start", show_alert=True)
         return
 
-    # Проверяем повторный отклик
     existing_row = sheets.find_response(project, user_id)
     if existing_row:
         await callback.answer("Вы уже откликались на эту вакансию!", show_alert=True)
         return
 
-    # Проверяем, что проект ещё открыт
     if not sheets.is_project_open(project, position):
         await callback.answer("Этот проект закрыт, отклики больше не принимаются.", show_alert=True)
         return
@@ -72,8 +69,21 @@ async def apply_start(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(ResponseStates.choosing_availability, F.data.startswith("avail:"))
 async def availability_chosen(callback: CallbackQuery, state: FSMContext):
     availability = callback.data.split("avail:")[1]
-    await state.update_data(availability=availability)
     await callback.message.edit_reply_markup()
+
+    # Если недоступен — отменяем отклик
+    if availability == "Нет":
+        data = await state.get_data()
+        project = data.get("project", "")
+        await state.clear()
+        await callback.message.answer(
+            f"❌ Отклик на проект <b>{project}</b> отменён — вы указали, что недоступны в даты мероприятия.",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    await state.update_data(availability=availability)
 
     await callback.message.answer(
         f"✅ Доступность: <b>{availability}</b>\n\n"
@@ -135,7 +145,6 @@ async def _finalize_response(message: Message, state: FSMContext):
     project = data["project"]
     position = data["position"]
 
-    # Ищем в базе фрилансеров
     freelancer_row, match_status = sheets.search_freelancer(last_name)
 
     if match_status == "found":
@@ -159,7 +168,6 @@ async def _finalize_response(message: Message, state: FSMContext):
         found_in_base=found_label,
     )
 
-    # Сообщение пользователю
     summary = (
         f"✅ <b>Отклик принят!</b>\n\n"
         f"📁 Проект: {project}\n"

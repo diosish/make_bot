@@ -2,7 +2,6 @@ import logging
 from aiogram import Router, Bot
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID, POSITIONS
 import sheets
@@ -15,6 +14,7 @@ USAGE = (
     "<code>/vacancy\n"
     "Должность: Event-менеджер\n"
     "Проект: Название проекта\n"
+    "Дата: 15.04.2026\n"
     "Текст: Описание вакансии...</code>\n\n"
     f"Доступные должности:\n" + "\n".join(f"• {p}" for p in POSITIONS)
 )
@@ -37,23 +37,28 @@ async def send_vacancy(message: Message, bot: Bot):
     text = message.text or ""
     lines = text.strip().splitlines()
 
-    # Парсим поля
     parsed = {}
     current_key = None
     current_val_lines = []
 
     for line in lines[1:]:  # пропускаем /vacancy
-        if line.lower().startswith("должность:"):
+        lower = line.lower()
+        if lower.startswith("должность:"):
             if current_key:
                 parsed[current_key] = "\n".join(current_val_lines).strip()
             current_key = "должность"
             current_val_lines = [line.split(":", 1)[1].strip()]
-        elif line.lower().startswith("проект:"):
+        elif lower.startswith("проект:"):
             if current_key:
                 parsed[current_key] = "\n".join(current_val_lines).strip()
             current_key = "проект"
             current_val_lines = [line.split(":", 1)[1].strip()]
-        elif line.lower().startswith("текст:"):
+        elif lower.startswith("дата:"):
+            if current_key:
+                parsed[current_key] = "\n".join(current_val_lines).strip()
+            current_key = "дата"
+            current_val_lines = [line.split(":", 1)[1].strip()]
+        elif lower.startswith("текст:"):
             if current_key:
                 parsed[current_key] = "\n".join(current_val_lines).strip()
             current_key = "текст"
@@ -67,6 +72,7 @@ async def send_vacancy(message: Message, bot: Bot):
 
     position = parsed.get("должность", "").strip()
     project = parsed.get("проект", "").strip()
+    event_date = parsed.get("дата", "").strip()
     vacancy_text = parsed.get("текст", "").strip()
 
     if not position or not project or not vacancy_text:
@@ -83,7 +89,7 @@ async def send_vacancy(message: Message, bot: Bot):
     users = sheets.get_users_by_position(position)
 
     # Регистрируем/обновляем проект в таблице проектов
-    sheets.upsert_project(project, position, vacancy_text)
+    sheets.upsert_project(project, position, vacancy_text, event_date)
 
     if not users:
         await message.answer(f"⚠️ Нет зарегистрированных пользователей с должностью «{position}».")
@@ -92,9 +98,11 @@ async def send_vacancy(message: Message, bot: Bot):
     msg_text = (
         f"📢 <b>Новая вакансия!</b>\n\n"
         f"📁 <b>Проект:</b> {project}\n"
-        f"💼 <b>Должность:</b> {position}\n\n"
-        f"{vacancy_text}"
+        f"💼 <b>Должность:</b> {position}\n"
     )
+    if event_date:
+        msg_text += f"📅 <b>Дата мероприятия:</b> {event_date}\n"
+    msg_text += f"\n{vacancy_text}"
 
     sent = 0
     failed = 0
@@ -120,7 +128,6 @@ async def send_vacancy(message: Message, bot: Bot):
 
 @router.message(Command("close"))
 async def close_project(message: Message):
-    """Закрыть проект: /close Название проекта"""
     if message.from_user.id != ADMIN_ID:
         return
     project_name = (message.text or "").replace("/close", "").strip()
@@ -136,7 +143,6 @@ async def close_project(message: Message):
 
 @router.message(Command("open"))
 async def open_project(message: Message):
-    """Открыть проект: /open Название проекта"""
     if message.from_user.id != ADMIN_ID:
         return
     project_name = (message.text or "").replace("/open", "").strip()
