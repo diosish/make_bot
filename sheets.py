@@ -68,7 +68,9 @@ def find_user(telegram_user_id: int) -> Optional[dict]:
     ws = get_users_sheet()
     records = ws.get_all_records()
     for r in records:
-        if str(r.get("telegram_user_id"))def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
+        if str(r.get("telegram_user_id"))
+        
+def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
     """
     Ищет фрилансера по фамилии в таблице фрилансеров.
     Возвращает (строка_данных, статус) где статус: 'found', 'not_found', 'multiple'
