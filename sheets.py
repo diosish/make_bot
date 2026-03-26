@@ -3,7 +3,6 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 from typing import Optional
 import logging
-
 from config import (
     GOOGLE_CREDENTIALS_FILE, SPREADSHEET_ID, FREELANCERS_SPREADSHEET_ID,
     USERS_SHEET, PROJECTS_SHEET, MAX_COMMENT_LENGTH, MAX_RATE_LENGTH, FREELANCERS_SHEET
@@ -18,8 +17,6 @@ SCOPES = [
 
 _client: Optional[gspread.Client] = None
 
-# БАГ ИСПРАВЛЕН: был объявлен дважды, второе объявление перезаписывало первое
-# и не включало колонки "активно" и "дата мероприятия"
 PROJECTS_HEADERS = [
     "название проекта",
     "должность",
@@ -47,11 +44,7 @@ def get_freelancers_spreadsheet() -> gspread.Spreadsheet:
     return get_client().open_by_key(FREELANCERS_SPREADSHEET_ID)
 
 
-# ─────────────────────────────────────────
-# USERS
-# ─────────────────────────────────────────
-
-
+# ───────────────────────────────────────── ПОЛЬЗОВАТЕЛИ ─────────────────────────────────────────
 
 def get_users_sheet() -> gspread.Worksheet:
     ss = get_spreadsheet()
@@ -60,7 +53,7 @@ def get_users_sheet() -> gspread.Worksheet:
     except gspread.exceptions.WorksheetNotFound:
         ws = ss.add_worksheet(title=USERS_SHEET, rows=1000, cols=10)
         ws.append_row(["telegram_user_id", "telegram_username", "фамилия", "имя", "должность",
-                        "дата регистрации", "время уведомлений"])
+                       "дата регистрации", "время уведомлений"])
     return ws
 
 
@@ -68,62 +61,7 @@ def find_user(telegram_user_id: int) -> Optional[dict]:
     ws = get_users_sheet()
     records = ws.get_all_records()
     for r in records:
-        if str(r.get("telegram_user_id"))
-        
-def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
-    """
-    Ищет фрилансера по фамилии в таблице фрилансеров.
-    Возвращает (строка_данных, статус) где статус: 'found', 'not_found', 'multiple'
-    """
-    try:
-        ss = get_freelancers_spreadsheet()
-        ws = ss.worksheet(FREELANCERS_SHEET)
-        records = ws.get_all_values()  # Получаем все значения как списки
-        
-        if len(records) < 2:  # Только заголовки или пусто
-            return None, "not_found"
-        
-        headers = [str(h).lower().strip() for h in records[0]]
-        
-        # Ищем индексы колонок
-        last_name_idx = None
-        first_name_idx = None
-        position_idx = None
-        
-        for i, h in enumerate(headers):
-            if "Фамилия" in h:
-                last_name_idx = i
-            elif "Имя" in h:
-                first_name_idx = i
-            elif "Тип услуги" in h:
-                position_idx = i
-        
-        # Если не нашли по заголовкам, используем стандартные позиции
-        # Обычно: [Имя, Фамилия, Телефон, Должность...] или [Фамилия, Имя...]
-        if last_name_idx is None:
-            last_name_idx = 1  # По умолчанию фамилия во второй колонке (индекс 1)
-        if first_name_idx is None:
-            first_name_idx = 0  # По умолчанию имя в первой колонке
-        if position_idx is None:
-            position_idx = 3  # По умолчанию должность в 4-й колонке
-        
-        matches = []
-        for row in records[1:]:  # Пропускаем заголовок
-            if len(row) > last_name_idx:
-                row_last_name = str(row[last_name_idx]).strip().lower()
-                if row_last_name == last_name.lower():
-                    matches.append(row)
-        
-        if len(matches) == 0:
-            return None, "not_found"
-        elif len(matches) == 1:
-            return matches[0], "found"
-        else:
-            return matches[0], "multiple"  # Возвращаем первого, но сигнализируем о множественности
-            
-    except Exception as e:
-        logger.error(f"search_freelancer error: {e}")
-        return None, "not_found" == str(telegram_user_id):
+        if str(r.get("telegram_user_id")) == str(telegram_user_id):
             return r
     return None
 
@@ -132,7 +70,6 @@ def save_user(telegram_user_id: int, username: str, last_name: str, first_name: 
     ws = get_users_sheet()
     records = ws.get_all_records()
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-
     for idx, r in enumerate(records, start=2):
         if str(r.get("telegram_user_id")) == str(telegram_user_id):
             ws.update(f"A{idx}:F{idx}", [[
@@ -151,13 +88,10 @@ def get_users_by_position(position: str) -> list[dict]:
     return [r for r in records if r.get("должность") == position]
 
 
-# БАГ ИСПРАВЛЕН: функция не была определена, вызов из projects.py падал с AttributeError
 def save_notify_time(telegram_user_id: int, hour: int):
     ws = get_users_sheet()
     records = ws.get_all_records()
     headers = ws.row_values(1)
-
-    # Убеждаемся, что колонка существует
     col_name = "время уведомлений"
     if col_name not in headers:
         new_col = len(headers) + 1
@@ -173,7 +107,6 @@ def save_notify_time(telegram_user_id: int, hour: int):
             return
 
 
-# БАГ ИСПРАВЛЕН: функция не была определена, вызов из notifications.py ломал весь polling
 def get_user_notify_hour(telegram_user_id: int) -> Optional[int]:
     ws = get_users_sheet()
     records = ws.get_all_records()
@@ -188,9 +121,60 @@ def get_user_notify_hour(telegram_user_id: int) -> Optional[int]:
     return None
 
 
-# ─────────────────────────────────────────
-# ПРОЕКТЫ
-# ─────────────────────────────────────────
+def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
+    """
+    Ищет фрилансера по фамилии в таблице фрилансеров.
+    Возвращает (строка_данных, статус) где статус: 'found', 'not_found', 'multiple'
+    """
+    try:
+        ss = get_freelancers_spreadsheet()
+        ws = ss.worksheet(FREELANCERS_SHEET)
+        records = ws.get_all_values()
+
+        if len(records) < 2:
+            return None, "not_found"
+
+        headers = [str(h).lower().strip() for h in records[0]]
+
+        last_name_idx = None
+        first_name_idx = None
+        position_idx = None
+
+        for i, h in enumerate(headers):
+            if "фамилия" in h:
+                last_name_idx = i
+            elif "имя" in h:
+                first_name_idx = i
+            elif "должность" in h:
+                position_idx = i
+
+        if last_name_idx is None:
+            last_name_idx = 1
+        if first_name_idx is None:
+            first_name_idx = 0
+        if position_idx is None:
+            position_idx = 3
+
+        matches = []
+        for row in records[1:]:
+            if len(row) > last_name_idx:
+                row_last_name = str(row[last_name_idx]).strip().lower()
+                if row_last_name == last_name.lower():
+                    matches.append(row)
+
+        if len(matches) == 0:
+            return None, "not_found"
+        elif len(matches) == 1:
+            return matches[0], "found"
+        else:
+            return matches[0], "multiple"
+
+    except Exception as e:
+        logger.error(f"search_freelancer error: {e}")
+        return None, "not_found"
+
+
+# ───────────────────────────────────────── ПРОЕКТЫ ─────────────────────────────────────────
 
 def get_projects_sheet() -> gspread.Worksheet:
     ss = get_spreadsheet()
@@ -206,7 +190,6 @@ def upsert_project(project_name: str, position: str, description: str, event_dat
     ws = get_projects_sheet()
     records = ws.get_all_records()
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-
     for idx, r in enumerate(records, start=2):
         if r.get("название проекта") == project_name and r.get("должность") == position:
             ws.update(f"C{idx}:G{idx}", [[
@@ -253,14 +236,13 @@ def get_projects_grouped() -> dict:
     ws = get_projects_sheet()
     records = ws.get_all_records()
     now = datetime.now()
-
     current = []
     future = []
     archive = []
 
     for r in records:
-        active = str(r.get("активно", "")).lower() == "true"
-        date_str = r.get("дата мероприятия", "")
+        active = str(r.get("активно", " ")).lower() == "true"
+        date_str = r.get("дата мероприятия", " ")
 
         if not date_str:
             archive.append(r)
@@ -286,10 +268,8 @@ def get_projects_grouped() -> dict:
     return {"current": current, "future": future, "archive": archive}
 
 
-# БАГ ИСПРАВЛЕН: не было try/except при открытии листов — падало если листов нет
 def move_project_by_status(project_name: str):
     sh = get_spreadsheet()
-
     try:
         planning_ws = sh.worksheet("Планируемые")
         open_ws = sh.worksheet("Открытые")
@@ -314,7 +294,7 @@ def move_project_by_status(project_name: str):
                 if not row or row[0] != project_name:
                     continue
 
-                project_type = row[status_idx] if status_idx < len(row) else ""
+                project_type = row[status_idx] if status_idx < len(row) else " "
 
                 if project_type == "Планируемый":
                     target = planning_ws
@@ -337,9 +317,7 @@ def move_project_by_status(project_name: str):
             logger.error(f"move_project_by_status error on sheet {ws.title}: {e}")
 
 
-# ─────────────────────────────────────────
-# ОТКЛИКИ
-# ─────────────────────────────────────────
+# ───────────────────────────────────────── ОТКЛИКИ ─────────────────────────────────────────
 
 RESPONSE_HEADERS = [
     "название проекта", "должность", "telegram_user_id", "telegram_username",
@@ -366,7 +344,7 @@ def find_response(project_name: str, telegram_user_id: int) -> Optional[int]:
     records = ws.get_all_records()
     for idx, r in enumerate(records, start=2):
         if str(r.get("telegram_user_id")) == str(telegram_user_id):
-            if r.get("статус отклика", "") != "Отменён":
+            if r.get("статус отклика", " ") != "Отменён":
                 return idx
     return None
 
@@ -385,20 +363,19 @@ def save_response(
     found_in_base: str,
 ):
     ws = get_responses_sheet(project_name)
-
     if len(comment) > MAX_COMMENT_LENGTH:
         comment = comment[:MAX_COMMENT_LENGTH]
     if len(rate) > MAX_RATE_LENGTH:
         rate = rate[:MAX_RATE_LENGTH]
 
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    base_data = " | ".join(str(v) for v in freelancer_row) if freelancer_row else ""
+    base_data = " | ".join(str(v) for v in freelancer_row) if freelancer_row else " "
 
     ws.append_row([
         project_name,
         position,
         telegram_user_id,
-        username or "",
+        username or " ",
         last_name,
         first_name,
         availability,
@@ -406,7 +383,7 @@ def save_response(
         comment,
         found_in_base,
         base_data,
-        "",
+        " ",
         "Активен",
         now,
     ])
@@ -417,7 +394,6 @@ def cancel_response(project_name: str, telegram_user_id: int) -> bool:
     ws = get_responses_sheet(project_name)
     records = ws.get_all_records()
     col_idx = RESPONSE_HEADERS.index("статус отклика") + 1
-
     for idx, r in enumerate(records, start=2):
         if str(r.get("telegram_user_id")) == str(telegram_user_id):
             if r.get("статус отклика") != "Отменён":
@@ -427,15 +403,11 @@ def cancel_response(project_name: str, telegram_user_id: int) -> bool:
     return False
 
 
-# ─────────────────────────────────────────
-# POLLING СТАТУСОВ ДЛЯ УВЕДОМЛЕНИЙ
-# ─────────────────────────────────────────
+# ───────────────────────────────────────── УВЕДОМЛЕНИЯ ─────────────────────────────────────────
 
 def get_pending_notifications(target_statuses: list[str]) -> list[dict]:
     ss = get_spreadsheet()
     results = []
-
-    # БАГ ИСПРАВЛЕН: теперь исключаем и PROJECTS_SHEET, а не только USERS_SHEET
     skip_titles = {USERS_SHEET, PROJECTS_SHEET}
 
     for ws in ss.worksheets():
@@ -456,9 +428,9 @@ def get_pending_notifications(target_statuses: list[str]) -> list[dict]:
             notif_col_idx = headers.index(notif_col_name) + 1
 
             for row_idx, r in enumerate(records, start=2):
-                status = r.get("статус", "").strip()
-                notif_sent = str(r.get("уведомление отправлено", "")).strip()
-                active = r.get("статус отклика", "").strip()
+                status = r.get("статус", " ").strip()
+                notif_sent = str(r.get("уведомление отправлено", " ")).strip()
+                active = r.get("статус отклика", " ").strip()
 
                 if status in target_statuses and not notif_sent and active == "Активен":
                     results.append({
