@@ -51,6 +51,8 @@ def get_freelancers_spreadsheet() -> gspread.Spreadsheet:
 # USERS
 # ─────────────────────────────────────────
 
+
+
 def get_users_sheet() -> gspread.Worksheet:
     ss = get_spreadsheet()
     try:
@@ -66,7 +68,60 @@ def find_user(telegram_user_id: int) -> Optional[dict]:
     ws = get_users_sheet()
     records = ws.get_all_records()
     for r in records:
-        if str(r.get("telegram_user_id")) == str(telegram_user_id):
+        if str(r.get("telegram_user_id"))def search_freelancer(last_name: str) -> tuple[Optional[list], str]:
+    """
+    Ищет фрилансера по фамилии в таблице фрилансеров.
+    Возвращает (строка_данных, статус) где статус: 'found', 'not_found', 'multiple'
+    """
+    try:
+        ss = get_freelancers_spreadsheet()
+        ws = ss.worksheet(FREELANCERS_SHEET)
+        records = ws.get_all_values()  # Получаем все значения как списки
+        
+        if len(records) < 2:  # Только заголовки или пусто
+            return None, "not_found"
+        
+        headers = [str(h).lower().strip() for h in records[0]]
+        
+        # Ищем индексы колонок
+        last_name_idx = None
+        first_name_idx = None
+        position_idx = None
+        
+        for i, h in enumerate(headers):
+            if "Фамилия" in h:
+                last_name_idx = i
+            elif "Имя" in h:
+                first_name_idx = i
+            elif "Тип услуги" in h:
+                position_idx = i
+        
+        # Если не нашли по заголовкам, используем стандартные позиции
+        # Обычно: [Имя, Фамилия, Телефон, Должность...] или [Фамилия, Имя...]
+        if last_name_idx is None:
+            last_name_idx = 1  # По умолчанию фамилия во второй колонке (индекс 1)
+        if first_name_idx is None:
+            first_name_idx = 0  # По умолчанию имя в первой колонке
+        if position_idx is None:
+            position_idx = 3  # По умолчанию должность в 4-й колонке
+        
+        matches = []
+        for row in records[1:]:  # Пропускаем заголовок
+            if len(row) > last_name_idx:
+                row_last_name = str(row[last_name_idx]).strip().lower()
+                if row_last_name == last_name.lower():
+                    matches.append(row)
+        
+        if len(matches) == 0:
+            return None, "not_found"
+        elif len(matches) == 1:
+            return matches[0], "found"
+        else:
+            return matches[0], "multiple"  # Возвращаем первого, но сигнализируем о множественности
+            
+    except Exception as e:
+        logger.error(f"search_freelancer error: {e}")
+        return None, "not_found" == str(telegram_user_id):
             return r
     return None
 
