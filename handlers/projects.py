@@ -17,11 +17,23 @@ async def show_projects(message: Message):
         await message.answer("Сначала пройдите регистрацию — нажмите /start")
         return
 
-    position = user.get("должность", "")
+    position = user.get("должность", "").strip()
     groups = sheets.get_projects_grouped()
 
-    # БАГ ИСПРАВЛЕН: фильтруем проекты по должности пользователя
-    projects = [p for p in groups["current"] if p.get("должность") == position]
+    # Нормализуем обе стороны: убираем пробелы и приводим к нижнему регистру
+    def normalize(s: str) -> str:
+        return s.strip().lower()
+
+    projects = [
+        p for p in groups["current"]
+        if normalize(p.get("должность", "")) == normalize(position)
+    ]
+
+    logger.info(
+        f"show_projects | user={user_id} position='{position}' "
+        f"all_current={[p.get('должность') for p in groups['current']]} "
+        f"matched={len(projects)}"
+    )
 
     if not projects:
         await message.answer(
