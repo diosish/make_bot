@@ -146,16 +146,30 @@ async def process_confirm_last_name_text(message: Message, state: FSMContext):
     )
     await check_freelancer(message, state)
 
-
 async def check_freelancer(message: Message, state: FSMContext):
     data = await state.get_data()
     last_name = data["last_name"]
-
-    freelancer_row, status = await _run(sheets.search_freelancer, last_name)
+    
+    try:
+        freelancer_row, status = await _run(sheets.search_freelancer, last_name)
+    except Exception as e:
+        logger.error(f"check_freelancer error: {e}")
+        await message.answer("⚠️ Ошибка при проверке базы. Попробуйте позже.")
+        return
 
     if status == "found":
-        first_name = freelancer_row[0]
-        position = freelancer_row[6]
+        # ВАЖНО: Проверьте индексы! В коде стоит [0] и [6].
+        # Убедитесь, что в таблице фрилансеров: 
+        # Колонка 0 (первая) = Имя
+        # Колонка 6 (седьмая) = Должность
+        # Если структура другая, бот будет присылать неверные данные или упадет с IndexError
+        try:
+            first_name = freelancer_row[0]
+            position = freelancer_row[6]
+        except IndexError:
+            logger.error(f"Структура строки фрилансера не соответствует ожидаемой: {freelancer_row}")
+            await message.answer("⚠️ Ошибка формата данных в базе. Обратитесь к админу.")
+            return
 
         await message.answer(
             f"✅ Найдены в базе:\n"
@@ -167,11 +181,11 @@ async def check_freelancer(message: Message, state: FSMContext):
         await finish_registration(message, state)
 
     elif status == "not_found":
-        await message.answer("❌ Вас нет в базе\nВведите имя:")
+        await message.answer("❌ Вас нет в базе\nВведите имя: ")
         await state.set_state(Registration.first_name)
 
     elif status == "multiple":
-        await message.answer("⚠️ Найдено несколько совпадений\nВведите имя:")
+        await message.answer("⚠️ Найдено несколько совпадений\nВведите имя: ")
         await state.set_state(Registration.first_name)
 
 
