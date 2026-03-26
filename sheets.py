@@ -72,20 +72,52 @@ def find_user(telegram_user_id: int) -> Optional[dict]:
 
 
 def save_user(telegram_user_id: int, username: str, last_name: str, first_name: str, position: str):
+    """
+    Сохраняет пользователя в таблицу Users.
+    telegram_user_id и username должны быть актуальными данными из Telegram.
+    """
     ws = get_users_sheet()
     records = ws.get_all_records()
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    headers = ws.row_values(1)
+
+    # Преобразуем username в строку
+    username_str = str(username) if username else ""
+    # Преобразуем telegram_user_id в строку для записи
+    user_id_str = str(telegram_user_id)
+
+    logger.info(f"Saving user: id={user_id_str}, username={username_str}, name={last_name} {first_name}, position={position}")
+
+    # Находим индекс колонки "время уведомлений" если она есть
+    notify_col = None
+    notify_val = ""
+    if "время уведомлений" in headers:
+        notify_col = headers.index("время уведомлений") + 1
 
     for idx, r in enumerate(records, start=2):
-        if str(r.get("telegram_user_id")) == str(telegram_user_id):
-            ws.update(f"A{idx}:F{idx}", [[
-                telegram_user_id, username or "", last_name, first_name, position, now
+        if str(r.get("telegram_user_id")) == user_id_str:
+            # Сохраняем значение времени уведомлений если оно есть
+            if notify_col:
+                try:
+                    notify_val = ws.cell(idx, notify_col).value or ""
+                except:
+                    notify_val = ""
+
+            # Обновляем только основные поля (A:E)
+            ws.update(f"A{idx}:E{idx}", [[
+                user_id_str, username_str, last_name, first_name, position
             ]])
-            logger.info(f"User {telegram_user_id} updated")
+            # Обновляем дату регистрации в колонке F
+            ws.update_cell(idx, 6, now)
+            # Возвращаем время уведомлений если оно было
+            if notify_col and notify_val:
+                ws.update_cell(idx, notify_col, notify_val)
+
+            logger.info(f"User {user_id_str} updated")
             return
 
-    ws.append_row([telegram_user_id, username or "", last_name, first_name, position, now, ""])
-    logger.info(f"User {telegram_user_id} registered")
+    ws.append_row([user_id_str, username_str, last_name, first_name, position, now, ""])
+    logger.info(f"User {user_id_str} registered")
 
 
 def get_users_by_position(position: str) -> list[dict]:
@@ -422,3 +454,109 @@ def get_pending_notifications(target_statuses: list[str]) -> list[dict]:
 def mark_notification_sent(ws: gspread.Worksheet, row_idx: int, notif_col_idx: int):
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
     ws.update_cell(row_idx, notif_col_idx, now)
+
+
+# ─────────────────────────────────────────
+# БАЗА ФРИЛАНСЕРОВ
+# ─────────────────────────────────────────
+
+def _clean_cell_value(value: str) -> str:
+    """
+    Очищает значение ячейки Google Sheets от артефактов выпадающих списков.
+    Удаляет кавычки, лишние пробелы, символы переноса строк.
+    """
+    if not value:
+        return ""
+    cleaned = str(value).strip().strip('"').strip("'").strip()
+    cleaned = cleaned.replace("\n", " ").replace("\r", "").replace("\t", " ")
+    while "  " in cleaned:
+        cleaned = cleaned.replace("  ", " ")
+    return cleaned.strip()
+
+
+def _parse_position_value(value: str) -> list[str]:
+    """
+    Парсит значение должности/типа услуги.
+    Может быть одно значение или несколько (через запятую/точку с запятой).
+    Возвращает список должностей.
+    """
+    cleaned = _clean_cell_value(value)
+    if not cleaned:
+        return []
+    # Разделяем по запятой, точке с запятой или переносу строки
+    separators = [",", ";", "/", "\n"]
+    parts = [cleaned]
+    for sep in separators:
+        new_parts = []
+        for p in parts:
+            new_parts.extend(p.split(sep))
+        parts = new_parts
+    # Очищаем каждое значение
+    return [p.strip() for p in parts if p.strip()]
+
+
+def search_freelancer(last_name: str) -> tuple[Optional[dict], str]:
+    """
+    Ищет фрилансера по фамилии в таблице FREELANCERS_SHEET.
+    Автоматически определяет столбцы: фамилия, имя, должность (Тип услуги).
+    Возвращает кортеж: (словарь_с_данными, статус).
+    Статус: "found" — найдено 1 совпадение, "multiple" — несколько, "not_found" — нет.
+    """
+    try:
+        ws = get_freelancers_spreadsheet().worksheet(FREELANCERS_SHEET)
+        rows = ws.get_all_values()
+    except Exception as e:
+        logger.error(f"Freelancer DB error: {e}")
+        return None, "not_found"
+
+    if not rows:
+        return None, "not_found"
+
+    # Определяем индексы столбцов по заголовкам (первая строка)
+    headers = [h.strip().lower() for h in rows[0]]
+
+    last_name_idx = None
+    first_name_idx = None
+    position_idx = None
+
+    for i, h in enumerate(headers):
+        if h in ("фамилия", "last name", "lastname", "surname"):
+            last_name_idx = i
+        elif h in ("имя", "first name", "firstname", "name"):
+            first_name_idx = i
+        # Ищем "Тип услуги" вместо "Тип занятости"
+        elif h in ("должность", "тип услуги", "type of service", "position", "занятость", "услуга"):
+            position_idx = i
+
+    # Если не нашли столбец с фамилией — ищем по первому столбцу
+    if last_name_idx is None:
+        last_name_idx = 0
+
+    matches = []
+    search_name = last_name.strip().lower()
+
+    for row in rows[1:]:
+        if len(row) > last_name_idx:
+            row_last_name = _clean_cell_value(row[last_name_idx]).lower()
+            if row_last_name == search_name:
+                matches.append(row)
+
+    if len(matches) == 1:
+        row = matches[0]
+        # Получаем должность и парсим возможные несколько значений
+        position_raw = row[position_idx] if position_idx is not None and len(row) > position_idx else ""
+        positions = _parse_position_value(position_raw)
+        
+        # Возвращаем словарь с данными, очищая значения
+        result = {
+            "фамилия": _clean_cell_value(row[last_name_idx]) if len(row) > last_name_idx else "",
+            "имя": _clean_cell_value(row[first_name_idx]) if first_name_idx is not None and len(row) > first_name_idx else "",
+            "должность": positions[0] if positions else "",  # первое значение
+            "должности": positions,  # все значения списком
+            "raw": row,  # полная строка для совместимости
+        }
+        return result, "found"
+    elif len(matches) > 1:
+        return None, "multiple"
+    else:
+        return None, "not_found"

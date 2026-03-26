@@ -145,14 +145,17 @@ async def _finalize_response(message: Message, state: FSMContext):
     project = data["project"]
     position = data["position"]
 
-    freelancer_row, match_status = sheets.search_freelancer(last_name)
+    freelancer_data, match_status = sheets.search_freelancer(last_name)
 
     if match_status == "found":
         found_label = "Да"
+        freelancer_row = freelancer_data.get("raw", [])
     elif match_status == "multiple":
         found_label = "несколько совпадений"
+        freelancer_row = []
     else:
         found_label = "Нет"
+        freelancer_row = []
 
     sheets.save_response(
         project_name=project,

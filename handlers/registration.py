@@ -21,6 +21,7 @@ class Registration(StatesGroup):
     last_name = State()
     first_name = State()
     position = State()
+    choose_base_action = State()  # Выбор: перенести данные или вручную
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -131,21 +132,34 @@ async def process_confirm_last_name_text(message: Message, state: FSMContext):
 async def check_freelancer(message: Message, state: FSMContext):
     data = await state.get_data()
     last_name = data["last_name"]
+    skip_search = data.get("skip_freelancer_search", False)
 
-    freelancer_row, status = sheets.search_freelancer(last_name)
+    # При обновлении профиля не ищем в базе фрилансеров
+    if skip_search:
+        await message.answer("Введите имя:")
+        await state.set_state(Registration.first_name)
+        return
+
+    freelancer_data, status = sheets.search_freelancer(last_name)
 
     if status == "found":
-        first_name = freelancer_row[0]
-        position = freelancer_row[6]
+        first_name = freelancer_data.get("имя", "")
+        positions = freelancer_data.get("должности", [])
+        position_display = ", ".join(positions) if positions else freelancer_data.get("должность", "")
 
         await message.answer(
-            f"✅ Найдены в базе:\n"
-            f"👤 {first_name} {last_name}\n"
-            f"💼 {position}\n\n"
-            f"Регистрация завершена"
+            f"✅ Найдены в базе:\n\n"
+            f"👤 <b>{first_name} {last_name}</b>\n"
+            f"💼 <b>Тип услуги:</b> {position_display}\n\n"
+            f"Что хотите сделать?",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Перенести данные", callback_data="base_use_data")],
+                [InlineKeyboardButton(text="✏️ Ввести вручную", callback_data="base_enter_manual")],
+            ])
         )
-        await state.update_data(first_name=first_name, position=position)
-        await finish_registration(message, state)
+        await state.set_state(Registration.choose_base_action)
+        return
 
     elif status == "not_found":
         await message.answer("❌ Вас нет в базе\nВведите имя:")
@@ -196,8 +210,10 @@ async def finish_registration(event, state: FSMContext):
 @router.callback_query(F.data == "update_profile")
 async def update_profile(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup()
+    # При обновлении профиля не ищем в базе фрилансеров
     await callback.message.answer("Введите фамилию:")
     await state.set_state(Registration.last_name)
+    await state.update_data(skip_freelancer_search=True)
     await callback.answer()
 
 
@@ -205,4 +221,64 @@ async def update_profile(callback: CallbackQuery, state: FSMContext):
 async def profile_ok(callback: CallbackQuery):
     await callback.message.edit_reply_markup()
     await callback.message.answer("✅ Отлично! Ожидайте вакансий.", reply_markup=main_keyboard())
+    await callback.answer()
+
+
+# Обработчики выбора действия с базой
+@router.callback_query(Registration.choose_base_action, F.data == "base_use_data")
+async def use_base_data(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup()
+    
+    data = await state.get_data()
+    last_name = data["last_name"]
+    freelancer_data, _ = sheets.search_freelancer(last_name)
+    
+    first_name = freelancer_data.get("имя", "")
+    positions = freelancer_data.get("должности", [])
+    position = positions[0] if positions else ""
+    
+    await callback.message.answer(
+        f"✅ Данные перенесены:\n"
+        f"👤 {first_name} {last_name}\n"
+        f"💼 {position}\n\n"
+        f"Регистрация завершена",
+        reply_markup=main_keyboard()
+    )
+    
+    await state.update_data(
+        first_name=first_name,
+        position=position,
+        freelancer_row=freelancer_data.get("raw", []),
+        found_in_base="Да"
+    )
+    
+    # Используем callback.from_user для актуальных данных
+    await finish_registration_with_user(callback, state, callback.from_user)
+    await callback.answer()
+
+
+async def finish_registration_with_user(event, state: FSMContext, user):
+    """Сохраняет пользователя с явной передачей данных из Telegram."""
+    data = await state.get_data()
+    
+    sheets.save_user(
+        telegram_user_id=user.id,
+        username=user.username,
+        last_name=data["last_name"],
+        first_name=data["first_name"],
+        position=data["position"]
+    )
+    
+    await event.message.answer(
+        "🎉 Регистрация завершена!\n\nНажмите кнопку ниже, чтобы посмотреть доступные мероприятия.",
+        reply_markup=main_keyboard()
+    )
+    await state.clear()
+
+
+@router.callback_query(Registration.choose_base_action, F.data == "base_enter_manual")
+async def enter_manual_data(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("Введите имя:")
+    await state.set_state(Registration.first_name)
     await callback.answer()
