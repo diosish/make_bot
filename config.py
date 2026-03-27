@@ -4,7 +4,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "944196754"))
+
+# Поддержка нескольких админов
+# ADMIN_IDS — строка с ID через запятую в .env (например: "944196754,123456789,987654321")
+ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "944196754")
+ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_RAW.split(",") if x.strip().isdigit()]
+
+# Для обратной совместимости (если используется ADMIN_ID в коде)
+ADMIN_ID = ADMIN_IDS[0] if ADMIN_IDS else None
+
+def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь админом."""
+    return user_id in ADMIN_IDS
 
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 FREELANCERS_SPREADSHEET_ID = os.getenv("FREELANCERS_SPREADSHEET_ID")

@@ -167,6 +167,38 @@ def get_user_notify_hour(telegram_user_id: int) -> Optional[int]:
 # ПРОЕКТЫ
 # ─────────────────────────────────────────
 
+PROJECTS_HEADERS = [
+    "название проекта",
+    "должность",
+    "описание",
+    "статус",
+    "дата создания",
+    "активно",
+    "дата мероприятия",
+]
+
+
+def _parse_checkbox_value(value) -> bool:
+    """
+    Преобразует значение чекбокса из Google Sheets в boolean.
+    Чекбокс возвращает TRUE/FALSE (как строку или boolean).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().upper() == "TRUE"
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return False
+
+
+def _to_checkbox_value(active: bool) -> str:
+    """
+    Преобразует boolean в формат чекбокса Google Sheets.
+    """
+    return "TRUE" if active else "FALSE"
+
+
 def get_projects_sheet() -> gspread.Worksheet:
     ss = get_spreadsheet()
     try:
@@ -178,30 +210,73 @@ def get_projects_sheet() -> gspread.Worksheet:
 
 
 def upsert_project(project_name: str, position: str, description: str, event_date: str = ""):
+    """
+    Создаёт или обновляет проект в таблице.
+    ВАЖНО: Чекбокс "активно" требует форматирования ячейки через Google Sheets UI.
+    После первого запуска вручную установите чекбокс в ячейке F2, затем скопируйте формат на столбец.
+    """
     ws = get_projects_sheet()
     records = ws.get_all_records()
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    # Для чекбокса Google Sheets нужно значение TRUE (без кавычек, как boolean)
+    active_value = True
 
     for idx, r in enumerate(records, start=2):
         if r.get("название проекта") == project_name and r.get("должность") == position:
-            ws.update(f"C{idx}:G{idx}", [[
-                description,
-                "Открыт",
-                now,
-                True,
-                event_date,
-            ]])
+            # Обновляем ячейки по отдельности для корректной работы чекбокса
+            ws.update_cell(idx, 3, description)  # описание
+            ws.update_cell(idx, 4, "Открыт")     # статус
+            ws.update_cell(idx, 5, now)          # дата создания
+            ws.update_cell(idx, 6, active_value) # активно (чекбокс)
+            ws.update_cell(idx, 7, event_date)   # дата мероприятия
             return
 
+    # Новая запись
     ws.append_row([
         project_name,
         position,
         description,
         "Открыт",
         now,
-        True,
+        active_value,  # чекбокс
         event_date,
     ])
+    
+    # Применяем форматирование чекбокса к новому столбцу
+    _apply_checkbox_format(ws, 6)  # колонка F
+
+
+def _apply_checkbox_format(ws, col_idx: int):
+    """
+    Применяет формат чекбокса к столбцу.
+    """
+    try:
+        # Получаем текущее форматирование
+        sheet_id = ws._properties['sheetId']
+        body = {
+            "requests": [{
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1,  # пропускаем заголовок
+                        "endRowIndex": 1000,
+                        "startColumnIndex": col_idx - 1,
+                        "endColumnIndex": col_idx,
+                    },
+                    "cell": {
+                        "dataValidation": {
+                            "condition": {
+                                "type": "BOOLEAN"
+                            }
+                        }
+                    },
+                    "fields": "dataValidation"
+                }
+            }]
+        }
+        ws.spreadsheet.batch_update(body)
+    except Exception as e:
+        logger.warning(f"Не удалось применить формат чекбокса: {e}")
 
 
 def is_project_open(project_name: str, position: str) -> bool:
@@ -234,7 +309,8 @@ def get_projects_grouped() -> dict:
     archive = []
 
     for r in records:
-        active = str(r.get("активно", "")).lower() == "true"
+        # Используем функцию для парсинга чекбокса
+        active = _parse_checkbox_value(r.get("активно", False))
         date_str = r.get("дата мероприятия", "")
 
         if not date_str:

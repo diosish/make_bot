@@ -3,13 +3,14 @@ from aiogram import Router, F
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, FSInputFile
+    ReplyKeyboardMarkup, KeyboardButton, FSInputFile,
+    ReplyKeyboardRemove
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import CommandStart
 from aiogram.fsm.state import StatesGroup, State
 
-from config import POSITIONS
+from config import POSITIONS, ADMIN_IDS, is_admin
 import sheets
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,12 @@ class Registration(StatesGroup):
     choose_base_action = State()  # Выбор: перенести данные или вручную
 
 
-def main_keyboard() -> ReplyKeyboardMarkup:
+def main_keyboard(user_id: int = None) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
+    # Кнопка показывается только зарегистрированным пользователям (не админу)
+    if user_id and is_admin(user_id):
+        # Админу показываем админ-панель
+        from handlers.vacancy import admin_keyboard
+        return admin_keyboard()
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📋 Доступные мероприятия")]],
         resize_keyboard=True,
@@ -100,9 +106,10 @@ async def last_name_confirmed(callback: CallbackQuery, state: FSMContext):
     if not last_name:
         await callback.message.answer("Ошибка. Введите фамилию:")
         await state.set_state(Registration.last_name)
+        await callback.answer()
         return
 
-    await check_freelancer(callback.message, state)
+    await check_freelancer(callback, state)
     await callback.answer()
 
 
@@ -129,7 +136,19 @@ async def process_confirm_last_name_text(message: Message, state: FSMContext):
     await check_freelancer(message, state)
 
 
-async def check_freelancer(message: Message, state: FSMContext):
+async def check_freelancer(event, state: FSMContext):
+    """
+    Проверяет наличие пользователя в базе фрилансеров.
+    event может быть Message или CallbackQuery.
+    """
+    # Определяем message и от кого callback
+    if hasattr(event, 'message') and event.message:
+        message = event.message
+        user_id = event.from_user.id
+    else:
+        message = event
+        user_id = event.from_user.id
+    
     data = await state.get_data()
     last_name = data["last_name"]
     skip_search = data.get("skip_freelancer_search", False)
@@ -198,11 +217,15 @@ async def finish_registration(event, state: FSMContext):
         position=data["position"]
     )
 
-    msg = event.message if hasattr(event, "message") else event
+    # Для callback query используем callback.message, для message — сам message
+    if hasattr(event, 'message') and event.message:
+        msg = event.message
+    else:
+        msg = event
 
     await msg.answer(
         "🎉 Регистрация завершена!\n\nНажмите кнопку ниже, чтобы посмотреть доступные мероприятия.",
-        reply_markup=main_keyboard()
+        reply_markup=main_keyboard(user.id)
     )
     await state.clear()
 
@@ -220,7 +243,7 @@ async def update_profile(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "profile_ok")
 async def profile_ok(callback: CallbackQuery):
     await callback.message.edit_reply_markup()
-    await callback.message.answer("✅ Отлично! Ожидайте вакансий.", reply_markup=main_keyboard())
+    await callback.message.answer("✅ Отлично! Ожидайте вакансий.", reply_markup=main_keyboard(callback.from_user.id))
     await callback.answer()
 
 
@@ -228,31 +251,31 @@ async def profile_ok(callback: CallbackQuery):
 @router.callback_query(Registration.choose_base_action, F.data == "base_use_data")
 async def use_base_data(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup()
-    
+
     data = await state.get_data()
     last_name = data["last_name"]
     freelancer_data, _ = sheets.search_freelancer(last_name)
-    
+
     first_name = freelancer_data.get("имя", "")
     positions = freelancer_data.get("должности", [])
     position = positions[0] if positions else ""
-    
+
     await callback.message.answer(
         f"✅ Данные перенесены:\n"
         f"👤 {first_name} {last_name}\n"
         f"💼 {position}\n\n"
         f"Регистрация завершена",
-        reply_markup=main_keyboard()
+        reply_markup=main_keyboard(callback.from_user.id)
     )
-    
+
     await state.update_data(
         first_name=first_name,
         position=position,
         freelancer_row=freelancer_data.get("raw", []),
         found_in_base="Да"
     )
-    
-    # Используем callback.from_user для актуальных данных
+
+    # Сохраняем пользователя
     await finish_registration_with_user(callback, state, callback.from_user)
     await callback.answer()
 
@@ -260,7 +283,7 @@ async def use_base_data(callback: CallbackQuery, state: FSMContext):
 async def finish_registration_with_user(event, state: FSMContext, user):
     """Сохраняет пользователя с явной передачей данных из Telegram."""
     data = await state.get_data()
-    
+
     sheets.save_user(
         telegram_user_id=user.id,
         username=user.username,
@@ -268,10 +291,16 @@ async def finish_registration_with_user(event, state: FSMContext, user):
         first_name=data["first_name"],
         position=data["position"]
     )
-    
-    await event.message.answer(
+
+    # Для callback query используем callback.message, для message — сам message
+    if hasattr(event, 'message') and event.message:
+        msg = event.message
+    else:
+        msg = event
+
+    await msg.answer(
         "🎉 Регистрация завершена!\n\nНажмите кнопку ниже, чтобы посмотреть доступные мероприятия.",
-        reply_markup=main_keyboard()
+        reply_markup=main_keyboard(user.id)
     )
     await state.clear()
 

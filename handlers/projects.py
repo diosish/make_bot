@@ -3,6 +3,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 
+from config import ADMIN_IDS, is_admin
 import sheets
 
 logger = logging.getLogger(__name__)
@@ -11,6 +12,12 @@ router = Router()
 
 async def show_projects(message: Message):
     user_id = message.from_user.id
+    
+    # Админу не показываем проекты
+    if is_admin(user_id):
+        await message.answer("🔒 Администраторам недоступен просмотр проектов.")
+        return
+    
     user = sheets.find_user(user_id)
 
     if not user:
